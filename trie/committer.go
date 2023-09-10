@@ -23,23 +23,17 @@ import (
 	"github.com/ethereum/go-ethereum/trie/trienode"
 )
 
-// leaf represents a trie leaf node
-type leaf struct {
-	blob   []byte      // raw blob of leaf
-	parent common.Hash // the hash of parent node
-}
-
 // committer is the tool used for the trie Commit operation. The committer will
 // capture all dirty nodes during the commit process and keep them cached in
 // insertion order.
 type committer struct {
-	nodes       *NodeSet
+	nodes       *trienode.NodeSet
 	tracer      *tracer
 	collectLeaf bool
 }
 
 // newCommitter creates a new committer or picks one from the pool.
-func newCommitter(nodeset *NodeSet, tracer *tracer, collectLeaf bool) *committer {
+func newCommitter(nodeset *trienode.NodeSet, tracer *tracer, collectLeaf bool) *committer {
 	return &committer{
 		nodes:       nodeset,
 		tracer:      tracer,
@@ -137,22 +131,15 @@ func (c *committer) store(path []byte, n node) node {
 		// The node is embedded in its parent, in other words, this node
 		// will not be stored in the database independently, mark it as
 		// deleted only if the node was existent in database before.
-		prev, ok := c.tracer.accessList[string(path)]
+		_, ok := c.tracer.accessList[string(path)]
 		if ok {
-			c.nodes.addNode(path, trienode.NewWithPrev(common.Hash{}, nil, prev))
+			c.nodes.AddNode(path, trienode.NewDeleted())
 		}
 		return n
 	}
 	// Collect the dirty node to nodeset for return.
-	var (
-		nhash = common.BytesToHash(hash)
-		node  = trienode.NewWithPrev(
-			nhash,
-			nodeToBytes(n),
-			c.tracer.accessList[string(path)],
-		)
-	)
-	c.nodes.addNode(path, node)
+	nhash := common.BytesToHash(hash)
+	c.nodes.AddNode(path, trienode.New(nhash, nodeToBytes(n)))
 
 	// Collect the corresponding leaf node if it's required. We don't check
 	// full node since it's impossible to store value in fullNode. The key
@@ -160,7 +147,7 @@ func (c *committer) store(path []byte, n node) node {
 	if c.collectLeaf {
 		if sn, ok := n.(*shortNode); ok {
 			if val, ok := sn.Val.(valueNode); ok {
-				c.nodes.addLeaf(&leaf{blob: val, parent: nhash})
+				c.nodes.AddLeaf(nhash, val)
 			}
 		}
 	}
@@ -172,7 +159,7 @@ type mptResolver struct{}
 
 // ForEach implements childResolver, decodes the provided node and
 // traverses the children inside.
-func (resolver mptResolver) forEach(node []byte, onChild func(common.Hash)) {
+func (resolver mptResolver) ForEach(node []byte, onChild func(common.Hash)) {
 	forGatherChildren(mustDecodeNodeUnsafe(nil, node), onChild)
 }
 
